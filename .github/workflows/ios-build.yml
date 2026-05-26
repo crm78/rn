@@ -1,0 +1,88 @@
+name: iOS Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: 'Build identifier (leave empty for auto-generated)'
+        required: false
+        type: string
+        default: ''
+      configuration:
+        description: 'Build configuration (Debug or Release)'
+        required: false
+        type: string
+        default: 'Debug'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 10
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build web app
+        run: pnpm run build
+
+      - name: Sync web assets to iOS
+        run: npx cap copy ios
+
+      - name: Build IPA
+        run: |
+          set -ex
+          cd ios/App
+
+          DERIVED_DATA_PATH="${GITHUB_WORKSPACE}/DerivedData"
+
+          xcodebuild \
+            -project App.xcodeproj \
+            -scheme App \
+            -configuration ${{ inputs.configuration }} \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$DERIVED_DATA_PATH" \
+            CODE_SIGNING_ALLOWED=NO \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            -quiet build
+
+          APP_PATH=$(find "$DERIVED_DATA_PATH/Build/Products/${{ inputs.configuration }}-iphoneos" -name "*.app" -type d | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: .app not found in DerivedData"
+            exit 1
+          fi
+          echo "Found .app at: $APP_PATH"
+
+          BUILD_ID="${{ inputs.build_id }}"
+          if [ -z "$BUILD_ID" ]; then
+            BUILD_ID="build-$(date +%Y%m%d-%H%M%S)"
+          fi
+
+          mkdir -p "${GITHUB_WORKSPACE}/build/Payload"
+          cp -R "$APP_PATH" "${GITHUB_WORKSPACE}/build/Payload/"
+          cd "${GITHUB_WORKSPACE}/build"
+          zip -rq "$BUILD_ID.ipa" Payload
+          rm -rf Payload
+          echo "IPA created: $BUILD_ID.ipa"
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipa
+          path: build/*.ipa
+          retention-days: 7
+          if-no-files-found: error
