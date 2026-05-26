@@ -1,4 +1,6 @@
 packages:
   - .
 
-onlyBuiltDependencies: '@tailwindcss/oxide'
+onlyBuiltDependencies:
+  - '@tailwindcss/oxide'
+  - esbuild
